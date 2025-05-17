@@ -143,42 +143,78 @@ def scrape_profile(username):
             except:
                 pass
             
-            # Extract name, bio, website
+            # Enhanced bio extraction with multiple approaches
+            # Approach 1: Try to find bio div directly
             try:
-                sections = driver.find_elements(By.XPATH, "//section/div")
-                for section in sections:
-                    # Try to find name
-                    try:
-                        h2_elements = section.find_elements(By.XPATH, ".//h2")
-                        if h2_elements:
-                            profile_data["real_name"] = h2_elements[0].text
-                    except:
-                        pass
-                    
-                    # Try to find bio and website
-                    try:
-                        span_elements = section.find_elements(By.XPATH, ".//span")
-                        if span_elements and len(span_elements) > 1:
-                            bio_text = ""
-                            for span in span_elements:
-                                bio_text += span.text + "\n"
-                            profile_data["bio"] = bio_text.strip()
-                    except:
-                        pass
-                    
-                    # Try to find website
-                    try:
-                        a_elements = section.find_elements(By.XPATH, ".//a[not(contains(@href, 'instagram.com'))]")
-                        if a_elements:
-                            profile_data["website"] = a_elements[0].get_attribute("href")
-                    except:
-                        pass
+                bio_div = WebDriverWait(driver, 5).until(
+                    EC.presence_of_element_located((By.XPATH, "//div[contains(@class, '-vDIg')]")) or
+                    EC.presence_of_element_located((By.XPATH, "//div[@class='QGPIr']")) or
+                    EC.presence_of_element_located((By.XPATH, "//div[contains(@class, 'xqs5bz0')]"))
+                )
+                if bio_div:
+                    profile_data["bio"] = bio_div.text.strip()
+                    print(f"Bio extracted (approach 1): {profile_data['bio'][:30]}...")
+            except:
+                print("Bio approach 1 failed, trying alternative methods...")
+            
+            # Approach 2: Check if bio is still empty, try span-based approach
+            if not profile_data["bio"]:
+                try:
+                    # First try h1 followed by span which often contains bio
+                    bio_spans = driver.find_elements(By.XPATH, "//section//h1/following-sibling::span")
+                    if bio_spans:
+                        bio_text = ""
+                        for span in bio_spans:
+                            bio_text += span.text + "\n"
+                        profile_data["bio"] = bio_text.strip()
+                        print(f"Bio extracted (approach 2a): {profile_data['bio'][:30]}...")
+                except:
+                    pass
+            
+            # Approach 3: Look for paragraphs or specific classes
+            if not profile_data["bio"]:
+                try:
+                    bio_elements = driver.find_elements(By.CSS_SELECTOR, "div._aa_c, div.xnz67gz, div.-vDIg")
+                    if bio_elements:
+                        for element in bio_elements:
+                            if len(element.text) > 10:  # Likely a bio if it has some content
+                                profile_data["bio"] = element.text.strip()
+                                print(f"Bio extracted (approach 3): {profile_data['bio'][:30]}...")
+                                break
+                except:
+                    pass
+            
+            # Extract name and website
+            try:
+                # Try to find name with improved selectors
+                name_elements = driver.find_elements(By.XPATH, "//section//h2") or \
+                               driver.find_elements(By.XPATH, "//header//h2") or \
+                               driver.find_elements(By.CSS_SELECTOR, "h2._aacl")
+                
+                if name_elements:
+                    profile_data["real_name"] = name_elements[0].text.strip()
+                    print(f"Name extracted: {profile_data['real_name']}")
+                
+                # Try to find website with improved selectors
+                website_elements = driver.find_elements(By.XPATH, "//a[contains(@rel, 'me') or contains(@rel, 'nofollow')]") or \
+                                  driver.find_elements(By.XPATH, "//a[not(contains(@href, 'instagram.com')) and not(contains(@href, '/explore/'))]")
+                
+                for element in website_elements:
+                    href = element.get_attribute("href")
+                    if href and not ("instagram.com" in href or "/explore/" in href or "/followers/" in href or "/following/" in href):
+                        profile_data["website"] = href
+                        print(f"Website extracted: {profile_data['website']}")
+                        break
             except Exception as e:
-                print(f"Error extracting profile details: {str(e)}")
+                print(f"Error extracting name/website details: {str(e)}")
             
             # Extract counts (posts, followers, following)
             try:
-                counts = driver.find_elements(By.XPATH, "//header//ul/li")
+                # Try multiple selectors for counts
+                counts = driver.find_elements(By.XPATH, "//header//ul/li") or \
+                        driver.find_elements(By.XPATH, "//section//ul/li") or \
+                        driver.find_elements(By.CSS_SELECTOR, "li._aa_5")
+                
                 if len(counts) >= 3:
                     try:
                         posts_text = counts[0].text
@@ -291,7 +327,7 @@ def scrape_profile(username):
                     print(f"Found {len(post_elements)} total posts. Will extract up to 6 image posts...")
                     
                     # We need to process more posts to find 6 images
-                    for post_idx, post in enumerate(post_elements[:50]):  # Try up to 20 posts to find 6 images
+                    for post_idx, post in enumerate(post_elements[:100]):  # Try up to 20 posts to find 6 images
                         if image_posts_count >= 6:
                             break
                         
@@ -353,7 +389,8 @@ def scrape_profile(username):
                                 "timestamp": "",
                                 "caption": "",
                                 "likes": 0,
-                                "comments": 0
+                                "comments": [],  # Changed to store actual comments
+                                "comments_count": 0
                             }
                             
                             # Get high-resolution image
@@ -493,60 +530,73 @@ def parse_count(count_text):
     except:
         return 0
 
-# Main execution
-try:
-    # Login to Instagram
-    if not login_to_instagram():
-        print("Failed to login. Exiting.")
-        driver.quit()
-        exit(1)
-    
-    # Scrape profiles
-    profile_data_list = []
-    not_found_profiles = []
-    
-    for user in users:
-        profile_data = scrape_profile(user)
-        if profile_data:
-            # Transform the profile_data to the requested format
-            formatted_posts = []
-            for idx, post in enumerate(profile_data["posts"]):
-                formatted_post = {
-                    "index": idx + 1,
-                    "src": post.get("thumbnail_url", ""),
-                    "alt": f"Photo by {profile_data['username']} on {post.get('timestamp', '').split('T')[0] if post.get('timestamp') else ''}.",
-                    "likes": str(post.get("likes", 0)),
-                    "caption": post.get("caption", ""),
-                    "comments": []  # This would need additional scraping to populate comments
+if __name__ == "__main__":
+    try:
+        # Login to Instagram
+        if not login_to_instagram():
+            print("Failed to login. Exiting.")
+            driver.quit()
+            exit(1)
+        
+        # Scrape profiles
+        profile_data_list = []
+        not_found_profiles = []
+        
+        for user in users:
+            print(f"\n=== Starting to scrape profile for: {user} ===")
+            profile_data = scrape_profile(user)
+            if profile_data:
+                # Transform the profile_data to the requested format
+                formatted_posts = []
+                for idx, post in enumerate(profile_data["posts"]):
+                    formatted_post = {
+                        "index": idx + 1,
+                        "src": post.get("thumbnail_url", ""),
+                        "alt": f"Photo by {profile_data['username']} on {post.get('timestamp', '').split('T')[0] if post.get('timestamp') else ''}.",
+                        "likes": str(post.get("likes", 0)),
+                        "caption": post.get("caption", ""),
+                        "comments": post.get("comments", [])
+                    }
+                    formatted_posts.append(formatted_post)
+                
+                # Create the formatted data structure with all profile info
+                formatted_data = {
+                    "username": profile_data.get("username", ""),
+                    "real_name": profile_data.get("real_name", ""),
+                    "bio": profile_data.get("bio", ""),
+                    "website": profile_data.get("website", ""),
+                    "private": profile_data.get("private", False),
+                    "verified": profile_data.get("verified", False),
+                    "post_count": profile_data.get("post_count", 0),
+                    "followers": profile_data.get("followers", 0),
+                    "following": profile_data.get("following", 0),
+                    "posts": formatted_posts
                 }
-                formatted_posts.append(formatted_post)
-            
-            # Create the formatted data structure
-            formatted_data = {
-                "posts": formatted_posts
-            }
-            
-            profile_data_list.append(formatted_data)
-        else:
-            not_found_profiles.append(user)
-    
-    # Save the JSON data
-    for i, formatted_data in enumerate(profile_data_list):
-        user = users[i] if i < len(users) else f"profile_{i}"
-        json_filename = f"{output_dir}/profile_data_{user}_{timestamp}.json"
-        with open(json_filename, 'w', encoding='utf-8') as json_file:
-            json.dump(formatted_data, json_file, indent=1)
-        print(f"Profile data saved to {json_filename}")
-    
-    # Print summary
-    print("\nThe following Instagram Profiles could not be found:")
-    print(not_found_profiles)
-    print(f"All post images saved to {image_dir}")
-    print(f"Number of profiles scraped: {len(profile_data_list)}")
+                
+                # Save the JSON data for this profile
+                json_filename = f"{output_dir}/profile_data_{user}_{timestamp}.json"
+                with open(json_filename, 'w', encoding='utf-8') as json_file:
+                    json.dump(formatted_data, json_file, indent=2)
+                print(f"✓ Profile data for {user} saved to {json_filename}")
+                
+                profile_data_list.append(formatted_data)
+            else:
+                not_found_profiles.append(user)
+                print(f"⚠️ Could not scrape profile for: {user}")
+        
+        # Print summary
+        print("\n=== Scraping Summary ===")
+        print(f"Successfully scraped {len(profile_data_list)} profiles")
+        if not_found_profiles:
+            print(f"Failed to scrape {len(not_found_profiles)} profiles: {', '.join(not_found_profiles)}")
 
-except Exception as e:
-    print(f"Error during execution: {str(e)}")
+    except Exception as e:
+        print(f"Error during execution: {str(e)}")
 
-finally:
-    # Close the browser
-    driver.quit()
+    finally:
+        # Close the browser
+        driver.quit()
+        print("Browser closed. Scraping complete.")
+else:
+    # Initialize but don't run when imported
+    print("Instagram scraper module imported.")
