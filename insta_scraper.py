@@ -43,6 +43,13 @@ chrome_options.add_argument("--disable-notifications")
 chrome_options.add_argument("--disable-infobars")
 chrome_options.add_argument("--mute-audio")
 
+# Add Chrome profile configuration
+profile_directory = "chrome_profile"
+profile_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), profile_directory)
+os.makedirs(profile_path, exist_ok=True)
+chrome_options.add_argument(f"--user-data-dir={profile_path}")
+chrome_options.add_argument("--profile-directory=Default")
+
 service = Service("E:/audit-ai-automation-main-insta-extension/chromedriver.exe")
 driver = webdriver.Chrome(service=service, options=chrome_options)
 
@@ -50,6 +57,19 @@ driver = webdriver.Chrome(service=service, options=chrome_options)
 def login_to_instagram():
     driver.get("https://www.instagram.com/")
     time.sleep(3)
+    
+    # Check if already logged in by looking for profile icon or other elements present after login
+    try:
+        logged_in_check = WebDriverWait(driver, 5).until(
+            EC.presence_of_element_located((By.XPATH, 
+                "//div[@role='button' and contains(@aria-label, 'Profile')]" + 
+                "| //span[contains(@aria-label, 'Profile')]" +
+                "| //a[contains(@href, '/direct/inbox/')]"))
+        )
+        print("### Already logged in! Session from Chrome profile loaded successfully.")
+        return True
+    except:
+        print("### Not logged in. Proceeding with login...")
     
     # Handle cookies popup if it appears
     try:

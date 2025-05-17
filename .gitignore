@@ -1,3 +1,7 @@
 venv
 .env
 profile_data
+broser_session
+__pycache__
+chrome_profile
+browser_session

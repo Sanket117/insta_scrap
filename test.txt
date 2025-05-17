@@ -1,0 +1,7 @@
+take product username form user --> 
+scrap the info of product --> 
+bio and comp LLMs (this will find compt) --> 
+scrap the comp info
+short info comp LLMs
+
+streamlit --> worker --> backend 
