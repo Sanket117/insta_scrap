@@ -24,11 +24,11 @@ users = [
 ]
 
 # Setup directories
-output_dir = "E:/audit-ai-automation-main-insta-extension/profile_data"
+output_dir = "output/product_data"
 os.makedirs(output_dir, exist_ok=True)
 
 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-image_dir = f"{output_dir}/profile_images_{timestamp}"
+image_dir = f"{output_dir}/profile_images"
 os.makedirs(image_dir, exist_ok=True)
 
 # Function to handle login
@@ -96,7 +96,19 @@ def login_to_instagram(page):
     return True
 
 # Function to scrape profile data
-def scrape_profile(page, username):
+def scrape_profile(page, username, image_dir_override=None, bypass_login_choice=False):
+    """
+    Scrapes an Instagram profile
+    
+    Args:
+        page: The Playwright page object
+        username: Instagram username to scrape
+        image_dir_override: Optional custom directory for saving images
+        bypass_login_choice: If True, skips the login choice prompt (for use when called from other scripts)
+    
+    Returns:
+        Dictionary with profile data or None if failed
+    """
     profile_data = {
         "username": username,
         "private": False,
@@ -109,6 +121,12 @@ def scrape_profile(page, username):
         "following": 0,
         "posts": []  # Will store information about the latest posts
     }
+    
+    # Use the specified image directory if provided, otherwise use the default
+    current_image_dir = image_dir_override if image_dir_override else image_dir
+    
+    # Ensure the image directory exists
+    os.makedirs(current_image_dir, exist_ok=True)
     
     try:
         # Go to the user's profile
@@ -136,7 +154,7 @@ def scrape_profile(page, username):
             # Approach 1: Try to find bio div directly
             try:
                 bio_div = page.wait_for_selector(
-                    "div.-vDIg, div.QGPIr, div.xqs5bz0",
+                    "div.-vDIg, div.QGPIr, div.xqs5bz0, div._aa_c",
                     timeout=5000
                 )
                 if bio_div:
@@ -148,8 +166,8 @@ def scrape_profile(page, username):
             # Approach 2: Check if bio is still empty, try span-based approach
             if not profile_data["bio"]:
                 try:
-                    # First try h1 followed by span which often contains bio
-                    bio_spans = page.locator("section h1+span").all()
+                    # Try a more general selector for the bio section
+                    bio_spans = page.locator("header section > div > span, section h1 ~ span").all()
                     if bio_spans:
                         bio_text = ""
                         for span in bio_spans:
@@ -162,7 +180,7 @@ def scrape_profile(page, username):
             # Approach 3: Look for paragraphs or specific classes
             if not profile_data["bio"]:
                 try:
-                    bio_elements = page.locator("div._aa_c, div.xnz67gz, div.-vDIg").all()
+                    bio_elements = page.locator("div._aa_c, div.xnz67gz, div.-vDIg, header section span._aacl").all()
                     if bio_elements:
                         for element in bio_elements:
                             text = element.text_content().strip()
@@ -407,12 +425,51 @@ def scrape_profile(page, username):
                             
                             # Get post caption
                             try:
-                                caption_elements = post_page.locator("div[role='menuitem'] span, h1+span, div[role='dialog'] span:has-text(' ')").all()
-                                if caption_elements:
-                                    post_data["caption"] = caption_elements[0].text_content()
-                                    print(f"Caption: {post_data['caption'][:30]}...")
+                                # Multiple approaches to extract captions
+                                caption = ""
+                                
+                                # Approach 1: Look for specific caption elements
+                                caption_elements = post_page.locator("div.C7I1f, div._a9zr, div[role='menuitem'] span, div._a9zs").all()
+                                if caption_elements and len(caption_elements) > 0:
+                                    caption = caption_elements[0].text_content().strip()
+                                
+                                # Approach 2: If caption is still empty, try more general selectors
+                                if not caption:
+                                    caption_elements = post_page.locator("h1+span, div[role='dialog'] span:has-text(' ')").all()
+                                    if caption_elements and len(caption_elements) > 0:
+                                        caption = caption_elements[0].text_content().strip()
+                                
+                                # Approach 3: Try another common selector
+                                if not caption:
+                                    caption_elements = post_page.locator("article div > span > div > span").all()
+                                    if caption_elements and len(caption_elements) > 0:
+                                        caption = caption_elements[0].text_content().strip()
+                                
+                                if caption:
+                                    post_data["caption"] = caption
+                                    print(f"Caption extracted: {post_data['caption'][:30]}...")
+                                    
+                                    # Extract hashtags from caption
+                                    hashtags = []
+                                    words = caption.split()
+                                    for word in words:
+                                        if word.startswith('#'):
+                                            hashtag = word.strip('.,!?:;\'\"')
+                                            if hashtag not in hashtags:
+                                                hashtags.append(hashtag)
+                                    
+                                    if hashtags:
+                                        post_data["hashtags"] = hashtags
+                                        print(f"Extracted {len(hashtags)} hashtags: {', '.join(hashtags[:3])}...")
+                                    else:
+                                        post_data["hashtags"] = []
+                                else:
+                                    post_data["caption"] = ""
+                                    post_data["hashtags"] = []
                             except Exception as e:
                                 print(f"Error getting caption: {str(e)}")
+                                post_data["caption"] = ""
+                                post_data["hashtags"] = []
                             
                             # Get post time
                             try:
@@ -445,7 +502,7 @@ def scrape_profile(page, username):
                                     if response.status_code == 200:
                                         post_id = post_url.split("/p/")[1].split("/")[0]
                                         image_filename = f"{username}_{post_id}.jpg"
-                                        image_path = os.path.join(image_dir, image_filename)
+                                        image_path = os.path.join(current_image_dir, image_filename)
                                         
                                         with open(image_path, 'wb') as img_file:
                                             for chunk in response.iter_content(1024):
@@ -617,6 +674,7 @@ if __name__ == "__main__":
                                 "alt": f"Photo by {profile_data['username']} on {post.get('timestamp', '').split('T')[0] if post.get('timestamp') else ''}.",
                                 "likes": str(post.get("likes", 0)),
                                 "caption": post.get("caption", ""),
+                                "hashtags": post.get("hashtags", []),
                                 "comments": post.get("comments", [])
                             }
                             formatted_posts.append(formatted_post)

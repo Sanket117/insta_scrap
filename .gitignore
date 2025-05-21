@@ -6,3 +6,4 @@ __pycache__
 chrome_profile
 browser_session
 playwright_profile
+output
