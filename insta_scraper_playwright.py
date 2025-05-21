@@ -13,21 +13,10 @@ load_dotenv()
 username = os.getenv('INSTAGRAM_USERNAME')
 password = os.getenv('INSTAGRAM_PASSWORD')
 
-# Check if environment variables are set
-if not username or not password:
-    raise ValueError("INSTAGRAM_USERNAME and INSTAGRAM_PASSWORD environment variables must be set")
-
-# Users to scrape
-users = [
-    'snapchat',
-    # Add more users as needed
-]
-
 # Setup directories
 output_dir = "output/product_data"
 os.makedirs(output_dir, exist_ok=True)
 
-timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
 image_dir = f"{output_dir}/profile_images"
 os.makedirs(image_dir, exist_ok=True)
 
@@ -95,6 +84,19 @@ def login_to_instagram(page):
     
     return True
 
+# Helper function to parse counts like "1k", "2.5M", etc.
+def parse_count(count_text):
+    try:
+        count_text = count_text.replace(',', '')
+        if 'k' in count_text.lower():
+            return int(float(count_text.lower().replace('k', '')) * 1000)
+        elif 'm' in count_text.lower():
+            return int(float(count_text.lower().replace('m', '')) * 1000000)
+        else:
+            return int(count_text)
+    except:
+        return 0
+
 # Function to scrape profile data
 def scrape_profile(page, username, image_dir_override=None, bypass_login_choice=False):
     """
@@ -150,8 +152,7 @@ def scrape_profile(page, username, image_dir_override=None, bypass_login_choice=
             except:
                 pass
             
-            # Enhanced bio extraction with multiple approaches
-            # Approach 1: Try to find bio div directly
+            # Enhanced bio extraction
             try:
                 bio_div = page.wait_for_selector(
                     "div.-vDIg, div.QGPIr, div.xqs5bz0, div._aa_c",
@@ -159,47 +160,24 @@ def scrape_profile(page, username, image_dir_override=None, bypass_login_choice=
                 )
                 if bio_div:
                     profile_data["bio"] = bio_div.text_content().strip()
-                    print(f"Bio extracted (approach 1): {profile_data['bio'][:30]}...")
             except:
-                print("Bio approach 1 failed, trying alternative methods...")
-            
-            # Approach 2: Check if bio is still empty, try span-based approach
-            if not profile_data["bio"]:
+                # Try alternative bio selectors if the first approach fails
                 try:
-                    # Try a more general selector for the bio section
                     bio_spans = page.locator("header section > div > span, section h1 ~ span").all()
                     if bio_spans:
                         bio_text = ""
                         for span in bio_spans:
                             bio_text += span.text_content() + "\n"
                         profile_data["bio"] = bio_text.strip()
-                        print(f"Bio extracted (approach 2a): {profile_data['bio'][:30]}...")
-                except:
-                    pass
-            
-            # Approach 3: Look for paragraphs or specific classes
-            if not profile_data["bio"]:
-                try:
-                    bio_elements = page.locator("div._aa_c, div.xnz67gz, div.-vDIg, header section span._aacl").all()
-                    if bio_elements:
-                        for element in bio_elements:
-                            text = element.text_content().strip()
-                            if len(text) > 10:  # Likely a bio if it has some content
-                                profile_data["bio"] = text
-                                print(f"Bio extracted (approach 3): {profile_data['bio'][:30]}...")
-                                break
                 except:
                     pass
             
             # Extract name and website
             try:
-                # Try to find name with improved selectors
                 name_element = page.locator("section h2, header h2, h2._aacl").first
                 if name_element:
                     profile_data["real_name"] = name_element.text_content().strip()
-                    print(f"Name extracted: {profile_data['real_name']}")
                 
-                # Try to find website with improved selectors
                 website_elements = page.locator("a[rel*='me'], a[rel*='nofollow']").all()
                 if not website_elements:
                     website_elements = page.locator("a:not([href*='instagram.com']):not([href*='/explore/'])").all()
@@ -208,14 +186,12 @@ def scrape_profile(page, username, image_dir_override=None, bypass_login_choice=
                     href = element.get_attribute("href")
                     if href and not ("instagram.com" in href or "/explore/" in href or "/followers/" in href or "/following/" in href):
                         profile_data["website"] = href
-                        print(f"Website extracted: {profile_data['website']}")
                         break
             except Exception as e:
                 print(f"Error extracting name/website details: {str(e)}")
             
             # Extract counts (posts, followers, following)
             try:
-                # Try multiple selectors for counts
                 counts = page.locator("header ul li, section ul li, li._aa_5").all()
                 
                 if len(counts) >= 3:
@@ -259,62 +235,39 @@ def scrape_profile(page, username, image_dir_override=None, bypass_login_choice=
                 page.evaluate("window.scrollBy(0, 300);")
                 time.sleep(2)
                 
-                # Try different selectors for finding posts
+                # Find posts using various selectors
                 post_elements = None
+                selectors = [
+                    "article a[href*='/p/']",
+                    "div._aagv a[href*='/p/'], div[style*='grid'] a[href*='/p/']",
+                    "a[href*='/p/']"
+                ]
                 
-                # Attempt 1: Find posts using article and a elements
-                try:
-                    post_elements = page.wait_for_selector_all("article a[href*='/p/']", timeout=10000)
-                    print(f"Found {len(post_elements)} posts using selector 1")
-                except:
-                    print("Selector 1 failed, trying selector 2...")
-                
-                # Attempt 2: Try alternative selector
-                if not post_elements or len(post_elements) == 0:
+                for selector in selectors:
                     try:
-                        post_elements = page.locator("article a[href*='/p/']").all()
-                        print(f"Found {len(post_elements)} posts using selector 2")
+                        post_elements = page.locator(selector).all()
+                        if post_elements and len(post_elements) > 0:
+                            print(f"Found {len(post_elements)} posts using selector: {selector}")
+                            break
                     except:
-                        print("Selector 2 failed, trying selector 3...")
-                
-                # Attempt 3: Try finding the grid directly
-                if not post_elements or len(post_elements) == 0:
-                    try:
-                        # Find the grid of posts
-                        grid = page.wait_for_selector("div._aagv, div[style*='grid']", timeout=10000)
-                        post_elements = grid.query_selector_all("a[href*='/p/']")
-                        print(f"Found {len(post_elements)} posts using selector 3")
-                    except:
-                        print("Selector 3 failed, trying selector 4...")
-                
-                # Attempt 4: Try a more generic approach
-                if not post_elements or len(post_elements) == 0:
-                    try:
-                        # Just find all links that could be posts
-                        post_elements = page.locator("a[href*='/p/']").all()
-                        print(f"Found {len(post_elements)} posts using selector 4")
-                    except:
-                        print("Selector 4 failed.")
+                        continue
                 
                 # Scroll down to load more posts if needed
-                if not post_elements or len(post_elements) < 10:
+                if not post_elements or len(post_elements) < 6:
                     print("Not enough posts found, scrolling to load more...")
                     for _ in range(3):  # Scroll a few times
                         page.evaluate("window.scrollBy(0, 1000);")
                         time.sleep(2)
                     
                     # Try to find posts again
-                    try:
-                        post_elements = page.locator("a[href*='/p/']").all()
-                        print(f"After scrolling, found {len(post_elements)} posts")
-                    except:
-                        print("Failed to find more posts after scrolling.")
-                
-                # Debug information
-                if not post_elements or len(post_elements) == 0:
-                    print(f"Could not find any posts for {username}. Saving page source for debugging.")
-                    with open(f"{output_dir}/{username}_page_source.html", "w", encoding="utf-8") as f:
-                        f.write(page.content())
+                    for selector in selectors:
+                        try:
+                            post_elements = page.locator(selector).all()
+                            if post_elements and len(post_elements) > 0:
+                                print(f"After scrolling, found {len(post_elements)} posts")
+                                break
+                        except:
+                            continue
                 
                 # Extract up to 6 latest image posts
                 image_posts_count = 0
@@ -323,8 +276,7 @@ def scrape_profile(page, username, image_dir_override=None, bypass_login_choice=
                 if post_elements and len(post_elements) > 0:
                     print(f"Found {len(post_elements)} total posts. Will extract up to 6 image posts...")
                     
-                    # We need to process more posts to find 6 images
-                    for post_idx, post in enumerate(post_elements[:100]):  # Try up to 100 posts to find 6 images
+                    for post_idx, post in enumerate(post_elements[:30]):  # Try up to 30 posts to find 6 images
                         if image_posts_count >= 6:
                             break
                         
@@ -339,10 +291,7 @@ def scrape_profile(page, username, image_dir_override=None, bypass_login_choice=
                             
                             # Skip reels
                             if "/reel/" in post_url:
-                                print(f"Skipping reel: {post_url}")
                                 continue
-                            
-                            print(f"Opening post {post_idx+1}: {post_url}")
                             
                             # Fix for relative URLs - ensure we have the full Instagram URL
                             if post_url.startswith('/'):
@@ -359,21 +308,18 @@ def scrape_profile(page, username, image_dir_override=None, bypass_login_choice=
                             # Check for video elements
                             video_elements = post_page.locator("video").count()
                             if video_elements > 0:
-                                print(f"Post contains video, skipping: {post_url}")
                                 is_video = True
                             
                             # Also check for video indicators in the UI
                             if not is_video:
                                 video_indicators = post_page.locator("span[aria-label*='Video'], span[class*='video']").count()
                                 if video_indicators > 0:
-                                    print(f"Post has video indicators, skipping: {post_url}")
                                     is_video = True
                             
                             # Check for special video player UI elements
                             if not is_video:
                                 video_ui_elements = post_page.locator("div._abpo, div[aria-label*='Play'], div[aria-label*='Pause']").count()
                                 if video_ui_elements > 0:
-                                    print(f"Post has video player UI elements, skipping: {post_url}")
                                     is_video = True
                             
                             if is_video:
@@ -388,14 +334,13 @@ def scrape_profile(page, username, image_dir_override=None, bypass_login_choice=
                                 "timestamp": "",
                                 "caption": "",
                                 "likes": 0,
-                                "comments": [],  # Changed to store actual comments
+                                "comments": [],
                                 "comments_count": 0
                             }
                             
                             # Get high-resolution image
                             try:
                                 # Try multiple selectors for finding the image
-                                img_element = None
                                 selectors = [
                                     "article div[role='button'] img",
                                     "article img:not([alt*='profile picture'])",
@@ -407,15 +352,13 @@ def scrape_profile(page, username, image_dir_override=None, bypass_login_choice=
                                     try:
                                         img_element = post_page.locator(selector).first
                                         if img_element:
+                                            post_data["thumbnail_url"] = img_element.get_attribute("src")
+                                            print(f"Found high-res image for post {image_posts_count+1}")
                                             break
                                     except:
                                         continue
                                 
-                                if img_element:
-                                    post_data["thumbnail_url"] = img_element.get_attribute("src")
-                                    print(f"Found high-res image: {post_data['thumbnail_url'][:50]}...")
-                                else:
-                                    print("Could not find image in post")
+                                if not post_data["thumbnail_url"]:
                                     post_page.close()
                                     continue
                             except Exception as e:
@@ -425,297 +368,314 @@ def scrape_profile(page, username, image_dir_override=None, bypass_login_choice=
                             
                             # Get post caption
                             try:
-                                # Multiple approaches to extract captions
-                                caption = ""
+                                caption_selectors = [
+                                    "div.C7I1f, div._a9zr, div[role='menuitem'] span, div._a9zs",
+                                    "h1+span, div[role='dialog'] span:has-text(' ')",
+                                    "article div > span > div > span"
+                                ]
                                 
-                                # Approach 1: Look for specific caption elements
-                                caption_elements = post_page.locator("div.C7I1f, div._a9zr, div[role='menuitem'] span, div._a9zs").all()
-                                if caption_elements and len(caption_elements) > 0:
-                                    caption = caption_elements[0].text_content().strip()
-                                
-                                # Approach 2: If caption is still empty, try more general selectors
-                                if not caption:
-                                    caption_elements = post_page.locator("h1+span, div[role='dialog'] span:has-text(' ')").all()
+                                for selector in caption_selectors:
+                                    caption_elements = post_page.locator(selector).all()
                                     if caption_elements and len(caption_elements) > 0:
-                                        caption = caption_elements[0].text_content().strip()
+                                        post_data["caption"] = caption_elements[0].text_content().strip()
+                                        break
                                 
-                                # Approach 3: Try another common selector
-                                if not caption:
-                                    caption_elements = post_page.locator("article div > span > div > span").all()
-                                    if caption_elements and len(caption_elements) > 0:
-                                        caption = caption_elements[0].text_content().strip()
-                                
-                                if caption:
-                                    post_data["caption"] = caption
-                                    print(f"Caption extracted: {post_data['caption'][:30]}...")
-                                    
-                                    # Extract hashtags from caption
+                                # Extract hashtags from caption
+                                if post_data["caption"]:
+                                    # Continue with existing code by adding the rest of the function
                                     hashtags = []
-                                    words = caption.split()
+                                    words = post_data["caption"].split()
                                     for word in words:
-                                        if word.startswith('#'):
-                                            hashtag = word.strip('.,!?:;\'\"')
-                                            if hashtag not in hashtags:
-                                                hashtags.append(hashtag)
+                                        if word.startswith("#"):
+                                            hashtags.append(word)
                                     
-                                    if hashtags:
-                                        post_data["hashtags"] = hashtags
-                                        print(f"Extracted {len(hashtags)} hashtags: {', '.join(hashtags[:3])}...")
-                                    else:
-                                        post_data["hashtags"] = []
-                                else:
-                                    post_data["caption"] = ""
-                                    post_data["hashtags"] = []
+                                    post_data["hashtags"] = hashtags
                             except Exception as e:
-                                print(f"Error getting caption: {str(e)}")
-                                post_data["caption"] = ""
-                                post_data["hashtags"] = []
+                                print(f"Error extracting caption: {str(e)}")
                             
-                            # Get post time
+                            # Get post timestamp
                             try:
-                                time_element = post_page.locator("time").first
-                                if time_element:
-                                    post_data["timestamp"] = time_element.get_attribute("datetime")
-                                    print(f"Timestamp: {post_data['timestamp']}")
+                                time_selectors = [
+                                    "time[datetime]",
+                                    "div._aaqe, div._aaqf, div[class*='timestamp']"
+                                ]
+                                
+                                for selector in time_selectors:
+                                    time_elements = post_page.locator(selector).all()
+                                    if time_elements and len(time_elements) > 0:
+                                        timestamp = time_elements[0].get_attribute("datetime")
+                                        if timestamp:
+                                            post_data["timestamp"] = timestamp
+                                            break
+                                        
+                                        timestamp_text = time_elements[0].text_content().strip()
+                                        if timestamp_text:
+                                            post_data["timestamp"] = timestamp_text
+                                            break
                             except Exception as e:
-                                print(f"Error getting timestamp: {str(e)}")
+                                print(f"Error extracting timestamp: {str(e)}")
                             
-                            # Get likes and comments
+                            # Get post likes/views
                             try:
-                                stats_elements = post_page.locator("section span").all()
-                                for element in stats_elements:
-                                    text = element.text_content().lower()
-                                    if "like" in text:
-                                        likes_text = text.split(" ")[0]
-                                        try:
-                                            post_data["likes"] = parse_count(likes_text)
-                                            print(f"Likes: {post_data['likes']}")
-                                        except:
-                                            pass
+                                like_selectors = [
+                                    "section:has(span[aria-label*='like']), div._aacl:has-text('likes'), div[role='dialog'] span:has-text('likes')",
+                                    "span[class*='like'], span.zV_eT, span._aap9"
+                                ]
+                                
+                                for selector in like_selectors:
+                                    like_elements = post_page.locator(selector).all()
+                                    if like_elements and len(like_elements) > 0:
+                                        like_text = like_elements[0].text_content().strip()
+                                        
+                                        # Extract just the number from text like "123 likes"
+                                        like_text = ''.join(filter(lambda x: x.isdigit() or x in 'km,.', like_text.lower()))
+                                        post_data["likes"] = parse_count(like_text)
+                                        break
                             except Exception as e:
-                                print(f"Error getting likes/comments: {str(e)}")
+                                print(f"Error extracting likes: {str(e)}")
                             
-                            # Download the image
+                            # Get comments count
+                            try:
+                                comment_selectors = [
+                                    "div[role='dialog'] span:has-text('comments'), span:has-text('View all')",
+                                    "ul > li:has-text('comments'), span[class*='comment'], span._acbn"
+                                ]
+                                
+                                for selector in comment_selectors:
+                                    comment_elements = post_page.locator(selector).all()
+                                    if comment_elements and len(comment_elements) > 0:
+                                        comment_text = comment_elements[0].text_content().strip()
+                                        
+                                        # Extract just the number from text like "View all 123 comments"
+                                        if "comments" in comment_text.lower():
+                                            comment_text = comment_text.lower().replace("comments", "").replace("view all", "").strip()
+                                            post_data["comments_count"] = parse_count(comment_text)
+                                            break
+                            except Exception as e:
+                                print(f"Error extracting comments count: {str(e)}")
+                            
+                            # Download the image if we have a URL
                             if post_data["thumbnail_url"]:
                                 try:
-                                    response = requests.get(post_data["thumbnail_url"], stream=True)
-                                    if response.status_code == 200:
-                                        post_id = post_url.split("/p/")[1].split("/")[0]
-                                        image_filename = f"{username}_{post_id}.jpg"
-                                        image_path = os.path.join(current_image_dir, image_filename)
-                                        
-                                        with open(image_path, 'wb') as img_file:
-                                            for chunk in response.iter_content(1024):
-                                                img_file.write(chunk)
-                                        
-                                        post_data["local_path"] = image_path
-                                        print(f"Downloaded image post for {username} (post {image_posts_count+1}/6)")
-                                        
-                                        # Add post to profile data
-                                        profile_data["posts"].append(post_data)
-                                        image_posts_count += 1
+                                    # Create a sanitized filename
+                                    date_part = ""
+                                    if post_data["timestamp"]:
+                                        try:
+                                            if "T" in post_data["timestamp"]:
+                                                # ISO format: YYYY-MM-DDTHH:MM:SS
+                                                dt = datetime.fromisoformat(post_data["timestamp"].replace("Z", "+00:00"))
+                                                date_part = dt.strftime("%Y%m%d_%H%M%S")
+                                            else:
+                                                # Just use timestamp as is
+                                                date_part = post_data["timestamp"].replace(" ", "_").replace(":", "").replace("/", "")
+                                        except:
+                                            date_part = f"post_{image_posts_count}"
                                     else:
-                                        print(f"Failed to download image for post: {post_url}, status: {response.status_code}")
+                                        date_part = f"post_{image_posts_count}"
+                                    
+                                    # Generate filename
+                                    img_filename = f"{username}_{date_part}.jpg"
+                                    safe_filename = "".join([c for c in img_filename if c.isalpha() or c.isdigit() or c in "._- "]).strip()
+                                    img_path = os.path.join(current_image_dir, safe_filename)
+                                    
+                                    # Download the image
+                                    response = requests.get(post_data["thumbnail_url"], headers={"User-Agent": "Mozilla/5.0"})
+                                    if response.status_code == 200:
+                                        with open(img_path, "wb") as f:
+                                            f.write(response.content)
+                                        
+                                        # Update post data with local image path
+                                        post_data["local_image_path"] = img_path
+                                        print(f"Downloaded image for post {image_posts_count+1}")
                                 except Exception as e:
-                                    print(f"Error downloading post image: {str(e)}")
+                                    print(f"Error downloading image: {str(e)}")
+                            
+                            # Add the post data to our list
+                            profile_data["posts"].append(post_data)
+                            image_posts_count += 1
                             
                             # Close the post page
                             post_page.close()
-                            time.sleep(1)
                             
                         except Exception as e:
-                            print(f"Error processing post: {str(e)}")
-                            # Make sure to close any additional tabs
+                            print(f"Error processing post {post_idx}: {str(e)}")
                             try:
                                 post_page.close()
                             except:
                                 pass
-                    
-                    print(f"Downloaded {image_posts_count} image posts for {username}")
-                else:
-                    print(f"No posts found for {username}")
-
+                
+                print(f"Extracted {image_posts_count} image posts for {username}")
             except Exception as e:
-                print(f"Error extracting posts for {username}: {str(e)}")
-        
+                print(f"Error extracting posts: {str(e)}")
+            
+            # Check if profile is private
+            try:
+                private_indicators = page.locator("h2:has-text('This Account is Private')").count()
+                if private_indicators > 0:
+                    profile_data["private"] = True
+            except:
+                pass
+            
         except Exception as e:
-            print(f"Error extracting data for {username}: {str(e)}")
-        
-        return profile_data
+            print(f"Error extracting profile data: {str(e)}")
     
     except Exception as e:
         print(f"Error scraping profile {username}: {str(e)}")
-        return profile_data
-
-# Helper function to parse counts like "1k", "2.5M", etc.
-def parse_count(count_text):
+        return None
+    
+    # Save profile data to JSON
     try:
-        count_text = count_text.replace(',', '')
-        if 'k' in count_text.lower():
-            return int(float(count_text.lower().replace('k', '')) * 1000)
-        elif 'm' in count_text.lower():
-            return int(float(count_text.lower().replace('m', '')) * 1000000)
-        else:
-            return int(count_text)
-    except:
-        return 0
+        output_path = os.path.join(output_dir, f"{username}_profile.json")
+        with open(output_path, "w", encoding="utf-8") as f:
+            json.dump(profile_data, f, indent=4, ensure_ascii=False)
+        print(f"Saved profile data for {username} to {output_path}")
+    except Exception as e:
+        print(f"Error saving profile data: {str(e)}")
+    
+    return profile_data
 
-if __name__ == "__main__":
+# After the scrape_profile function, add this new function
+
+def prod_profile_scrape(product_name, username):
+    """
+    Scrape the profile of a product's Instagram account with dedicated image storage.
+    
+    Args:
+        product_name (str): Name of the product for folder organization
+        username (str): Instagram username to scrape
+    
+    Returns:
+        dict: Profile data of the scraped account
+    """
     try:
-        # Display options to the user
-        print("\n=== Instagram Scraper Options ===")
-        print("1. Login to Instagram manually")
-        print("2. Scrape profiles (using saved login if available)")
-        
-        choice = input("\nEnter your choice (1 or 2): ")
+        # Create a dedicated directory for product profile images
+        product_image_dir = f"output/product_data/profile_images/{product_name}"
+        os.makedirs(product_image_dir, exist_ok=True)
         
         with sync_playwright() as playwright:
             # Create browser instance
             browser = playwright.chromium.launch(
-                headless=False,  # Set to True for production
-                slow_mo=100  # Slows down Playwright operations to make them visible
+                headless=False,
+                slow_mo=100
             )
             
             # Create a persistent context with the user data directory 
             profile_directory = "playwright_profile"
             profile_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), profile_directory)
-            os.makedirs(profile_path, exist_ok=True)
             
             # Check if state.json exists (saved login)
             login_state_exists = os.path.exists(os.path.join(profile_path, "state.json"))
             
+            if not login_state_exists:
+                print("❌ Error: No saved login found. Please run the script first to login.")
+                return None
+                
             context = browser.new_context(
                 user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
                 viewport={"width": 1280, "height": 720},
-                storage_state=os.path.join(profile_path, "state.json") if login_state_exists else None
+                storage_state=os.path.join(profile_path, "state.json")
             )
             
             # Create a new page
             page = context.new_page()
             
-            if choice == "1":
-                # Open Instagram login page and let user log in manually
+            try:
                 page.goto("https://www.instagram.com/")
+                time.sleep(3)
                 
-                print("\n=== Manual Login Instructions ===")
-                print("1. Please log in to Instagram in the browser window that opened.")
-                print("2. After successfully logging in, CLOSE THE BROWSER WINDOW manually.")
-                print("3. Your login session will be saved automatically.")
+                # Scrape profile for the product username with custom image directory
+                product_data = scrape_profile(page, username, image_dir_override=product_image_dir)
                 
-                try:
-                    # Wait for user to manually close the browser or press Enter to continue
-                    print("\nAfter logging in, press Enter in this console to save your session...")
-                    input()
-                    
-                    # Save storage state for future sessions
-                    context.storage_state(path=os.path.join(profile_path, "state.json"))
-                    print("\n✓ Login session saved.")
-                    print("You can now run the scraper with option 2 to scrape profiles.")
-                except Exception as e:
-                    print(f"Error during manual login: {str(e)}")
-                
-            elif choice == "2":
-                # Check if we need to login first
-                login_needed = not login_state_exists
-                
-                if login_needed:
-                    print("No saved login found. Logging in first...")
-                    if not login_to_instagram(page):
-                        print("Failed to login. Exiting.")
-                        browser.close()
-                        exit(1)
-                    
-                    # Save storage state for future sessions
-                    context.storage_state(path=os.path.join(profile_path, "state.json"))
+                # Save profile data with product name
+                if product_data:
+                    output_path = os.path.join(output_dir, f"{product_name}.json")
+                    with open(output_path, "w", encoding="utf-8") as f:
+                        json.dump(product_data, f, indent=4, ensure_ascii=False)
+                    print(f"✅ Saved product profile data for {username} to {output_path}")
                 else:
-                    # Try to use the saved login
-                    try:
-                        page.goto("https://www.instagram.com/")
-                        time.sleep(3)
-                        
-                        # Check if we're still logged in
-                        logged_in = page.locator(
-                            "div[role='button'][aria-label*='Profile'], span[aria-label*='Profile'], a[href*='/direct/inbox/']"
-                        ).count() > 0
-                        
-                        if not logged_in:
-                            print("Saved login expired. Logging in again...")
-                            if not login_to_instagram(page):
-                                print("Failed to login. Exiting.")
-                                browser.close()
-                                exit(1)
-                            
-                            # Save storage state for future sessions
-                            context.storage_state(path=os.path.join(profile_path, "state.json"))
-                        else:
-                            print("Using saved login session.")
-                    except Exception as e:
-                        print(f"Error checking login status: {str(e)}")
-                        print("Attempting to login again...")
-                        if not login_to_instagram(page):
-                            print("Failed to login. Exiting.")
-                            browser.close()
-                            exit(1)
+                    print(f"❌ Failed to scrape profile for {username}")
                 
-                # Now scrape profiles
-                profile_data_list = []
-                not_found_profiles = []
+                # Close browser
+                browser.close()
                 
-                for user in users:
-                    print(f"\n=== Starting to scrape profile for: {user} ===")
-                    profile_data = scrape_profile(page, user)
-                    if profile_data:
-                        # Transform the profile_data to the requested format
-                        formatted_posts = []
-                        for idx, post in enumerate(profile_data["posts"]):
-                            formatted_post = {
-                                "index": idx + 1,
-                                "src": post.get("thumbnail_url", ""),
-                                "alt": f"Photo by {profile_data['username']} on {post.get('timestamp', '').split('T')[0] if post.get('timestamp') else ''}.",
-                                "likes": str(post.get("likes", 0)),
-                                "caption": post.get("caption", ""),
-                                "hashtags": post.get("hashtags", []),
-                                "comments": post.get("comments", [])
-                            }
-                            formatted_posts.append(formatted_post)
-                        
-                        # Create the formatted data structure with all profile info
-                        formatted_data = {
-                            "username": profile_data.get("username", ""),
-                            "real_name": profile_data.get("real_name", ""),
-                            "bio": profile_data.get("bio", ""),
-                            "website": profile_data.get("website", ""),
-                            "private": profile_data.get("private", False),
-                            "verified": profile_data.get("verified", False),
-                            "post_count": profile_data.get("post_count", 0),
-                            "followers": profile_data.get("followers", 0),
-                            "following": profile_data.get("following", 0),
-                            "posts": formatted_posts
-                        }
-                        
-                        # Save the JSON data for this profile
-                        json_filename = f"{output_dir}/profile_data_{user}_{timestamp}.json"
-                        with open(json_filename, 'w', encoding='utf-8') as json_file:
-                            json.dump(formatted_data, json_file, indent=2)
-                        print(f"✓ Profile data for {user} saved to {json_filename}")
-                        
-                        profile_data_list.append(formatted_data)
-                    else:
-                        not_found_profiles.append(user)
-                        print(f"⚠️ Could not scrape profile for: {user}")
+                return product_data
                 
-                # Print summary
-                print("\n=== Scraping Summary ===")
-                print(f"Successfully scraped {len(profile_data_list)} profiles")
-                if not_found_profiles:
-                    print(f"Failed to scrape {len(not_found_profiles)} profiles: {', '.join(not_found_profiles)}")
-            
-            else:
-                print("Invalid choice. Please run the script again and enter 1 or 2.")
-            
-            # Close the browser
-            browser.close()
-            print("Browser closed.")
-
+            except Exception as e:
+                print(f"❌ Error scraping product profile: {str(e)}")
+                browser.close()
+                return None
+                
     except Exception as e:
-        print(f"Error during execution: {str(e)}")
+        print(f"❌ Error in prod_profile_scrape: {str(e)}")
+        return None
+
+def main():
+    # List of usernames to scrape
+    users = [
+        # Add Instagram usernames to scrape
+        # For example:
+        # "instagram",
+        # "nike",
+        # "natgeo"
+    ]
+    
+    # Get usernames from command line if provided
+    import sys
+    if len(sys.argv) > 1:
+        users = sys.argv[1:]
+    
+    # If no users specified, prompt for input
+    if not users:
+        user_input = input("Enter Instagram usernames to scrape (separated by commas): ")
+        users = [username.strip() for username in user_input.split(",") if username.strip()]
+    
+    if not users:
+        print("No usernames provided. Exiting.")
+        return
+    
+    print(f"Will scrape profiles for: {', '.join(users)}")
+    
+    # Run with Playwright
+    with sync_playwright() as p:
+        # Launch the browser
+        browser = p.chromium.launch(headless=False)  # Set headless=True for production
+        
+        # Create a context with viewport and user agent
+        context = browser.new_context(
+            viewport={"width": 1280, "height": 800},
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+        )
+        
+        # Create a new page
+        page = context.new_page()
+        
+        # Login to Instagram
+        if not login_to_instagram(page):
+            print("Failed to log in to Instagram. Exiting.")
+            browser.close()
+            return
+        
+        # Scrape each profile
+        for username in users:
+            print(f"\n--- Scraping profile for {username} ---")
+            profile_data = scrape_profile(page, username)
+            
+            if profile_data:
+                print(f"Successfully scraped profile for {username}")
+                print(f"Followers: {profile_data['followers']}")
+                print(f"Following: {profile_data['following']}")
+                print(f"Posts: {profile_data['post_count']}")
+                print(f"Verified: {'Yes' if profile_data['verified'] else 'No'}")
+                print(f"Private: {'Yes' if profile_data['private'] else 'No'}")
+                print(f"Extracted {len(profile_data['posts'])} posts")
+            else:
+                print(f"Failed to scrape profile for {username}")
+            
+            # Wait a bit before scraping the next profile to avoid rate limiting
+            time.sleep(5)
+        
+        # Close the browser
+        browser.close()
+
+if __name__ == "__main__":
+    main()

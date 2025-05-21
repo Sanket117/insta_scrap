@@ -206,20 +206,16 @@ def get_top_competitor(product_company_name):
         except Exception as e:
             print(f"⚠️ Warning: Failed to load competitor profile data: {str(e)}")
     
-    # Load additional profile data to enhance our analysis
+    # Load profile data of the target company to enhance our analysis
     try:
         profile_data_collection = {}
-
-        for profile in additional_profiles:
-            profile_path = f"output/product_data/{profile}.json"
-            if os.path.exists(profile_path):
-                with open(profile_path, 'r', encoding='utf-8') as f:
-                    profile_data_collection[profile] = json.load(f)
-                print(f"✅ Loaded additional profile data from {profile_path}")
-            else:
-                print(f"⚠️ Warning: Additional profile data not found at {profile_path}")
+        profile_path = f"output/product_data/{product_company_name}.json"
+        if os.path.exists(profile_path):
+            with open(profile_path, 'r', encoding='utf-8') as f:
+                profile_data_collection[product_company_name] = json.load(f)
+            print(f"✅ Loaded target profile data from {profile_path}")
     except Exception as e:
-        print(f"⚠️ Warning: Failed to load additional profile data: {str(e)}")
+        print(f"⚠️ Warning: Failed to load profile data: {str(e)}")
         profile_data_collection = {}
 
     # Initialize Claude client
@@ -293,6 +289,10 @@ def get_top_competitor(product_company_name):
     - Target audience overlap
     - Market positioning
     - Content strategy similarities
+    
+    Understand the context from the additional profile data and mostly focused on the bio understand what this compony is aobut 
+            provided and use it to refine your analysis.
+
     
     Return ONLY a valid JSON array sorted by followers_count (highest first). Example:
     [
@@ -429,7 +429,8 @@ def comp_profile_scrape(profile_name):
                     time.sleep(3)
                     
                     # Create a dedicated directory for competitor profile images
-                    competitor_image_dir = "output/competitor_profiles/profile_images"
+                    # Fix: Properly format the f-string
+                    competitor_image_dir = f"output/competitor_profiles/profile_images/{username}"
                     os.makedirs(competitor_image_dir, exist_ok=True)
                     
                     # Now scrape profile for the competitor username with custom image directory
