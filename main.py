@@ -122,7 +122,7 @@ def prod_profile_scrape(username, login_choice=None, bypass_login_choice=False):
                 profile_data = scrape_profile(page, username)
                 
                 if profile_data:
-                    print(f"✅ Successfully scraped profile: {username}")
+                    print(f"Successfully scraped profile: {username}")
                     print(f"Followers: {profile_data['followers']}")
                     print(f"Posts: {len(profile_data['posts'])}")
                     
@@ -142,7 +142,7 @@ def prod_profile_scrape(username, login_choice=None, bypass_login_choice=False):
                     json_filename = f"{output_dir}/{username}.json"
                     with open(json_filename, 'w', encoding='utf-8') as json_file:
                         json.dump(profile_data, json_file, indent=2)
-                    print(f"✅ Profile data for {username} saved to {json_filename}")
+                    print(f"Profile data for {username} saved to {json_filename}")
                     
                     # Find top competitor
                     print(f"Finding top competitors for {company_name}...")
@@ -162,7 +162,7 @@ def prod_profile_scrape(username, login_choice=None, bypass_login_choice=False):
                         competitors_json_filename = f"{comp_output_dir}/{username}_competitor.json"
                         with open(competitors_json_filename, 'w', encoding='utf-8') as json_file:
                             json.dump(top_competitors, json_file, indent=2)
-                        print(f"✅ Competitors data for {username} saved to {competitors_json_filename}")
+                        print(f"Competitors data for {username} saved to {competitors_json_filename}")
                         
                         # Still return the top competitor for backwards compatibility
                         top_competitor = top_competitors[0] if top_competitors else None
@@ -176,7 +176,7 @@ def prod_profile_scrape(username, login_choice=None, bypass_login_choice=False):
             print("Browser closed.")
             
     except Exception as e:
-        print(f"❌ Error during execution: {str(e)}")
+        print(f"Error during execution: {str(e)}")
         return None, None
         
     return profile_data, top_competitor
@@ -187,7 +187,7 @@ def get_top_competitor(product_company_name):
     # Check if API key is available
     api_key = os.getenv("ANTHROPIC_API_KEY")
     if not api_key:
-        print("❌ Error: Anthropic API key not found in environment variables")
+        print("Error: Anthropic API key not found in environment variables")
         return None
 
     # Load competitor profile data if it exists
@@ -202,9 +202,9 @@ def get_top_competitor(product_company_name):
         try:
             with open(competitor_file, 'r', encoding='utf-8') as f:
                 competitor_data = json.load(f)
-            print(f"✅ Loaded competitor profile data from {competitor_file}")
+            print(f"Loaded competitor profile data from {competitor_file}")
         except Exception as e:
-            print(f"⚠️ Warning: Failed to load competitor profile data: {str(e)}")
+            print(f"Warning: Failed to load competitor profile data: {str(e)}")
     
     # Load profile data of the target company to enhance our analysis
     try:
@@ -328,23 +328,23 @@ def get_top_competitor(product_company_name):
                 result = json.loads(raw_json)
                 return result  # Return the full list of competitors instead of just the first one
             else:
-                print("❌ Error: Could not find JSON array in Claude's response")
+                print("Error: Could not find JSON array in Claude's response")
                 print("🔍 Raw response content:")
                 print(raw_text)
                 return None
         except Exception as e:
-            print(f"❌ Error: Failed to extract JSON from response: {e}")
+            print(f"Error: Failed to extract JSON from response: {e}")
             print("🔍 Raw response content:")
             print(raw_text)
             return None
 
     except json.JSONDecodeError as e:
-        print(f"❌ Error: Failed to parse Claude response as JSON: {e}")
+        print(f"Error: Failed to parse Claude response as JSON: {e}")
         print("🔍 Raw response content:")
         print(raw_text)
         return None
     except Exception as e:
-        print(f"❌ Error getting competitors: {e}")
+        print(f"Error getting competitors: {e}")
         return None
 
 def comp_profile_scrape(profile_name):
@@ -362,7 +362,7 @@ def comp_profile_scrape(profile_name):
         comp_file_path = f"output/competitor_data/{profile_name}_competitor.json"
         
         if not os.path.exists(comp_file_path):
-            print(f"❌ Error: Competitor file not found at {comp_file_path}")
+            print(f"Error: Competitor file not found at {comp_file_path}")
             return None, None
         
         # Read the competitor data from the JSON file
@@ -370,7 +370,7 @@ def comp_profile_scrape(profile_name):
             competitors = json.load(file)
         
         if not competitors or not isinstance(competitors, list) or len(competitors) == 0:
-            print("❌ Error: No valid competitor data found in the file")
+            print("Error: No valid competitor data found in the file")
             return None, None
         
         # Sort competitors by follower count (highest first)
@@ -382,7 +382,7 @@ def comp_profile_scrape(profile_name):
         # Try each competitor in order until one succeeds
         for comp_index, competitor in enumerate(sorted_competitors):
             if not competitor or 'instagram_handle' not in competitor:
-                print(f"⚠️ Warning: Competitor #{comp_index+1} has no Instagram handle, skipping")
+                print(f"Warning: Competitor #{comp_index+1} has no Instagram handle, skipping")
                 continue
                 
             # Extract the username from the Instagram handle URL
@@ -412,7 +412,7 @@ def comp_profile_scrape(profile_name):
                 login_state_exists = os.path.exists(os.path.join(profile_path, "state.json"))
                 
                 if not login_state_exists:
-                    print("❌ Error: No saved login found. Please run the script first to login.")
+                    print("Error: No saved login found. Please run the script first to login.")
                     return None, None
                     
                 context = browser.new_context(
@@ -437,7 +437,7 @@ def comp_profile_scrape(profile_name):
                     competitor_data = scrape_profile(page, username, image_dir_override=competitor_image_dir)
                     
                     if competitor_data:
-                        print(f"✅ Successfully scraped competitor profile: {username}")
+                        print(f"Successfully scraped competitor profile: {username}")
                         print(f"Followers: {competitor_data['followers']}")
                         print(f"Posts: {len(competitor_data['posts'])}")
                         
@@ -448,7 +448,7 @@ def comp_profile_scrape(profile_name):
                         json_filename = f"{output_dir}/{profile_name}_top_competitor_{username}.json"
                         with open(json_filename, 'w', encoding='utf-8') as json_file:
                             json.dump(competitor_data, json_file, indent=2)
-                        print(f"✅ Competitor profile data saved to {json_filename}")
+                        print(f"Competitor profile data saved to {json_filename}")
                         
                         # If we successfully scraped this competitor, break the loop
                         browser.close()
@@ -457,7 +457,7 @@ def comp_profile_scrape(profile_name):
                     else:
                         print(f"⚠️ Failed to scrape competitor profile: {username}, trying next competitor if available")
                 except Exception as e:
-                    print(f"❌ Error during competitor scraping: {str(e)}")
+                    print(f"Error during competitor scraping: {str(e)}")
                     print("Trying next competitor if available...")
                 finally:
                     browser.close()
@@ -465,12 +465,12 @@ def comp_profile_scrape(profile_name):
         
         # If we reached here, all competitors failed
         if len(sorted_competitors) > 0:
-            print(f"❌ Failed to scrape any of the {len(sorted_competitors)} competitors")
+            print(f"Failed to scrape any of the {len(sorted_competitors)} competitors")
         
         return None, None
         
     except Exception as e:
-        print(f"❌ Error during competitor profile scraping: {str(e)}")
+        print(f"Error during competitor profile scraping: {str(e)}")
         return None, None
 
 # If script is run directly, prompt for Instagram username
@@ -540,11 +540,11 @@ if __name__ == "__main__":
             
             print("\n=== Analysis Complete ===")
             if comp_data:
-                print("✅ Successfully analyzed profile and top competitor")
+                print("Successfully analyzed profile and top competitor")
             else:
-                print("⚠️ Warning: Profile analyzed but failed to analyze top competitor")
+                print("Warning: Profile analyzed but failed to analyze top competitor")
         else:
-            print("❌ Failed to analyze profile. Workflow stopped.")
+            print("Failed to analyze profile. Workflow stopped.")
     else:
         print("Invalid choice.")
     
