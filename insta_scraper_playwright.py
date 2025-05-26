@@ -7,12 +7,6 @@ from datetime import datetime
 import urllib.parse
 from dotenv import load_dotenv
 
-# Load environment variables from .env file
-load_dotenv()
-# Login credentials from environment variables
-username = os.getenv('INSTAGRAM_USERNAME')
-password = os.getenv('INSTAGRAM_PASSWORD')
-
 # Setup directories
 output_dir = "output/product_data"
 os.makedirs(output_dir, exist_ok=True)
