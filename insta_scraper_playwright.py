@@ -98,7 +98,7 @@ def parse_count(count_text):
         return 0
 
 # Function to scrape profile data
-def scrape_profile(page, username, image_dir_override=None, bypass_login_choice=False):
+def scrape_profile(page, username, image_dir_override=None):
     """
     Scrapes an Instagram profile
     
@@ -106,7 +106,6 @@ def scrape_profile(page, username, image_dir_override=None, bypass_login_choice=
         page: The Playwright page object
         username: Instagram username to scrape
         image_dir_override: Optional custom directory for saving images
-        bypass_login_choice: If True, skips the login choice prompt (for use when called from other scripts)
     
     Returns:
         Dictionary with profile data or None if failed
@@ -227,16 +226,23 @@ def scrape_profile(page, username, image_dir_override=None, bypass_login_choice=
             except Exception as e:
                 print(f"Error extracting counts: {str(e)}")
             
-            # Now extract the latest 6 image posts
+            # Now extract exactly 6 image posts - this is the part we're improving
             try:
-                print(f"Extracting posts for {username}...")
+                print(f"Extracting exactly 6 image posts for {username}...")
                 
-                # Scroll down slightly to load posts
-                page.evaluate("window.scrollBy(0, 300);")
-                time.sleep(2)
+                # Check if profile is private first
+                private_indicators = page.locator("h2:has-text('This Account is Private')").count()
+                if private_indicators > 0:
+                    profile_data["private"] = True
+                    print(f"Warning: {username} is a private account. May not be able to extract posts.")
+                
+                # Scroll down to load more posts - do this multiple times to ensure we have enough posts
+                for scroll_attempt in range(5):
+                    page.evaluate(f"window.scrollBy(0, {1000 * (scroll_attempt + 1)});")
+                    time.sleep(2)
                 
                 # Find posts using various selectors
-                post_elements = None
+                post_elements = []
                 selectors = [
                     "article a[href*='/p/']",
                     "div._aagv a[href*='/p/'], div[style*='grid'] a[href*='/p/']",
@@ -245,38 +251,103 @@ def scrape_profile(page, username, image_dir_override=None, bypass_login_choice=
                 
                 for selector in selectors:
                     try:
-                        post_elements = page.locator(selector).all()
-                        if post_elements and len(post_elements) > 0:
+                        found_posts = page.locator(selector).all()
+                        if found_posts and len(found_posts) > 0:
+                            post_elements = found_posts
                             print(f"Found {len(post_elements)} posts using selector: {selector}")
                             break
                     except:
                         continue
                 
-                # Scroll down to load more posts if needed
-                if not post_elements or len(post_elements) < 6:
-                    print("Not enough posts found, scrolling to load more...")
-                    for _ in range(3):  # Scroll a few times
-                        page.evaluate("window.scrollBy(0, 1000);")
-                        time.sleep(2)
+                # If we still don't have enough posts, try scrolling more aggressively
+                if not post_elements or len(post_elements) < 12:  # Try to get more than we need for fallbacks
+                    print("Not enough posts found, scrolling more aggressively...")
+                    for _ in range(3):
+                        page.evaluate("window.scrollTo(0, document.body.scrollHeight);")
+                        time.sleep(3)
                     
-                    # Try to find posts again
+                    # Try to find posts again with all selectors
                     for selector in selectors:
                         try:
-                            post_elements = page.locator(selector).all()
-                            if post_elements and len(post_elements) > 0:
-                                print(f"After scrolling, found {len(post_elements)} posts")
+                            found_posts = page.locator(selector).all()
+                            if found_posts and len(found_posts) > 0:
+                                post_elements = found_posts
+                                print(f"After aggressive scrolling, found {len(post_elements)} posts")
                                 break
                         except:
                             continue
                 
-                # Extract up to 6 latest image posts
+                # If we still don't have enough posts, try a more targeted approach
+                if not post_elements or len(post_elements) < 6:
+                    print("Still not enough posts, trying alternative approach...")
+                    # Try to force-load the page with a reload and wait longer
+                    page.reload()
+                    time.sleep(5)
+                    
+                    # Scroll down in smaller increments
+                    for i in range(10):
+                        page.evaluate(f"window.scrollBy(0, 300);")
+                        time.sleep(1)
+                    
+                    # Try one last time with all selectors
+                    for selector in selectors:
+                        try:
+                            found_posts = page.locator(selector).all()
+                            if found_posts and len(found_posts) > 0:
+                                post_elements = found_posts
+                                print(f"Final attempt found {len(post_elements)} posts")
+                                break
+                        except:
+                            continue
+                
+                # Process posts to get exactly 6 image posts
                 image_posts_count = 0
                 processed_urls = set()  # Keep track of posts we've already processed
                 
-                if post_elements and len(post_elements) > 0:
-                    print(f"Found {len(post_elements)} total posts. Will extract up to 6 image posts...")
+                # If we have private account with no visible posts
+                if profile_data["private"] and (not post_elements or len(post_elements) == 0):
+                    print(f"WARNING: {username} is private with no visible posts. Creating placeholders.")
+                    # Create 6 placeholder posts
+                    for i in range(6):
+                        placeholder_post = {
+                            "url": f"https://www.instagram.com/{username}/",
+                            "thumbnail_url": "",
+                            "timestamp": datetime.now().isoformat(),
+                            "caption": "Private account - no visible posts",
+                            "likes": 0,
+                            "comments": [],
+                            "comments_count": 0,
+                            "is_placeholder": True
+                        }
+                        profile_data["posts"].append(placeholder_post)
+                        image_posts_count += 1
                     
-                    for post_idx, post in enumerate(post_elements[:30]):  # Try up to 30 posts to find 6 images
+                    print(f"Created {image_posts_count} placeholder posts for private account")
+                elif not post_elements or len(post_elements) == 0:
+                    print(f"WARNING: No posts found for {username}. Creating placeholders.")
+                    # Create 6 placeholder posts for accounts with no posts
+                    for i in range(6):
+                        placeholder_post = {
+                            "url": f"https://www.instagram.com/{username}/",
+                            "thumbnail_url": "",
+                            "timestamp": datetime.now().isoformat(),
+                            "caption": "No posts available",
+                            "likes": 0,
+                            "comments": [],
+                            "comments_count": 0,
+                            "is_placeholder": True
+                        }
+                        profile_data["posts"].append(placeholder_post)
+                        image_posts_count += 1
+                    
+                    print(f"Created {image_posts_count} placeholder posts for account with no posts")
+                else:
+                    # Process up to 30 posts to find 6 images - this gives us plenty of attempts
+                    # in case some posts are videos or stories
+                    print(f"Found {len(post_elements)} posts. Processing to find 6 image posts...")
+                    
+                    max_attempts = min(50, len(post_elements))  # Try up to 50 posts to find 6 images
+                    for post_idx, post in enumerate(post_elements[:max_attempts]):
                         if image_posts_count >= 6:
                             break
                         
@@ -322,7 +393,13 @@ def scrape_profile(page, username, image_dir_override=None, bypass_login_choice=
                                 if video_ui_elements > 0:
                                     is_video = True
                             
-                            if is_video:
+                            # If it's a video, try to get the thumbnail anyway if we're running low on posts
+                            force_use_video = False
+                            if is_video and (post_idx >= max_attempts - 12) and image_posts_count < 4:
+                                print(f"Running low on posts, using video thumbnail as fallback for post #{image_posts_count+1}")
+                                force_use_video = True
+                            
+                            if is_video and not force_use_video:
                                 # Close the post page and skip this post
                                 post_page.close()
                                 continue
@@ -345,7 +422,10 @@ def scrape_profile(page, username, image_dir_override=None, bypass_login_choice=
                                     "article div[role='button'] img",
                                     "article img:not([alt*='profile picture'])",
                                     "div[role='dialog'] article img",
-                                    "div[role='dialog'] img:not([alt*='profile picture'])"
+                                    "div[role='dialog'] img:not([alt*='profile picture'])",
+                                    "img[alt*='Photo by']",  # Common alt text format
+                                    "img[sizes*='px']",      # Images typically have sizes attribute
+                                    "img[src*='instagram']"  # Any Instagram-hosted image
                                 ]
                                 
                                 for selector in selectors:
@@ -357,6 +437,293 @@ def scrape_profile(page, username, image_dir_override=None, bypass_login_choice=
                                             break
                                     except:
                                         continue
+                                
+                                # If we couldn't find an image, try taking a screenshot as last resort
+                                if not post_data["thumbnail_url"] and image_posts_count < 5:
+                                    try:
+                                        print(f"No image found, taking screenshot for post {image_posts_count+1}")
+                                        screenshot_path = os.path.join(current_image_dir, f"{username}_post_{image_posts_count+1}_screenshot.jpg")
+                                        post_page.screenshot(path=screenshot_path)
+                                        post_data["thumbnail_url"] = f"file://{screenshot_path}"  # Local file URL
+                                        post_data["is_screenshot"] = True
+                                    except Exception as ss_error:
+                                        print(f"Error taking screenshot: {str(ss_error)}")
+                                
+                                if not post_data["thumbnail_url"]:
+                                    post_page.close()
+                                    continue
+                            except Exception as e:
+                                print(f"Error getting high-res image: {str(e)}")
+                                post_page.close()
+                                continue
+                            
+                            # Get post caption
+                            try:
+                                caption_selectors = [
+                                    "div.C7I1f, div._a9zr, div[role='menuitem'] span, div._a9zs",
+                                    "h1+span, div[role='dialog'] span:has-text(' ')",
+                                    "article div > span > div > span"
+                                ]
+                                
+                                for selector in caption_selectors:
+                                    caption_elements = post_page.locator(selector).all()
+                                    if caption_elements and len(caption_elements) > 0:
+                                        post_data["caption"] = caption_elements[0].text_content().strip()
+                                        break
+                                
+                                # Extract hashtags from caption
+                                if post_data["caption"]:
+                                    # Continue with existing code by adding the rest of the function
+                                    hashtags = []
+                                    words = post_data["caption"].split()
+                                    for word in words:
+                                        if word.startswith("#"):
+                                            hashtags.append(word)
+                                    
+                                    post_data["hashtags"] = hashtags
+                            except Exception as e:
+                                print(f"Error extracting caption: {str(e)}")
+                            
+                            # Get post timestamp
+                            try:
+                                time_selectors = [
+                                    "time[datetime]",
+                                    "div._aaqe, div._aaqf, div[class*='timestamp']"
+                                ]
+                                
+                                for selector in time_selectors:
+                                    time_elements = post_page.locator(selector).all()
+                                    if time_elements and len(time_elements) > 0:
+                                        timestamp = time_elements[0].get_attribute("datetime")
+                                        if timestamp:
+                                            post_data["timestamp"] = timestamp
+                                            break
+                                        
+                                        timestamp_text = time_elements[0].text_content().strip()
+                                        if timestamp_text:
+                                            post_data["timestamp"] = timestamp_text
+                                            break
+                            except Exception as e:
+                                print(f"Error extracting timestamp: {str(e)}")
+                            
+                            # Get post likes/views
+                            try:
+                                like_selectors = [
+                                    "section:has(span[aria-label*='like']), div._aacl:has-text('likes'), div[role='dialog'] span:has-text('likes')",
+                                    "span[class*='like'], span.zV_eT, span._aap9"
+                                ]
+                                
+                                for selector in like_selectors:
+                                    like_elements = post_page.locator(selector).all()
+                                    if like_elements and len(like_elements) > 0:
+                                        like_text = like_elements[0].text_content().strip()
+                                        
+                                        # Extract just the number from text like "123 likes"
+                                        like_text = ''.join(filter(lambda x: x.isdigit() or x in 'km,.', like_text.lower()))
+                                        post_data["likes"] = parse_count(like_text)
+                                        break
+                            except Exception as e:
+                                print(f"Error extracting likes: {str(e)}")
+                            
+                            # Get comments count
+                            try:
+                                comment_selectors = [
+                                    "div[role='dialog'] span:has-text('comments'), span:has-text('View all')",
+                                    "ul > li:has-text('comments'), span[class*='comment'], span._acbn"
+                                ]
+                                
+                                for selector in comment_selectors:
+                                    comment_elements = post_page.locator(selector).all()
+                                    if comment_elements and len(comment_elements) > 0:
+                                        comment_text = comment_elements[0].text_content().strip()
+                                        
+                                        # Extract just the number from text like "View all 123 comments"
+                                        if "comments" in comment_text.lower():
+                                            comment_text = comment_text.lower().replace("comments", "").replace("view all", "").strip()
+                                            post_data["comments_count"] = parse_count(comment_text)
+                                            break
+                            except Exception as e:
+                                print(f"Error extracting comments count: {str(e)}")
+                            
+                            # Download the image if we have a URL
+                            if post_data["thumbnail_url"]:
+                                try:
+                                    # Create a sanitized filename
+                                    date_part = ""
+                                    if post_data["timestamp"]:
+                                        try:
+                                            if "T" in post_data["timestamp"]:
+                                                # ISO format: YYYY-MM-DDTHH:MM:SS
+                                                dt = datetime.fromisoformat(post_data["timestamp"].replace("Z", "+00:00"))
+                                                date_part = dt.strftime("%Y%m%d_%H%M%S")
+                                            else:
+                                                # Just use timestamp as is
+                                                date_part = post_data["timestamp"].replace(" ", "_").replace(":", "").replace("/", "")
+                                        except:
+                                            date_part = f"post_{image_posts_count}"
+                                    else:
+                                        date_part = f"post_{image_posts_count}"
+                                    
+                                    # Generate filename
+                                    img_filename = f"{username}_{date_part}.jpg"
+                                    safe_filename = "".join([c for c in img_filename if c.isalpha() or c.isdigit() or c in "._- "]).strip()
+                                    img_path = os.path.join(current_image_dir, safe_filename)
+                                    
+                                    # If this is not a screenshot we already saved
+                                    if not post_data.get("is_screenshot", False):
+                                        # Download the image
+                                        response = requests.get(post_data["thumbnail_url"], headers={"User-Agent": "Mozilla/5.0"})
+                                        if response.status_code == 200:
+                                            with open(img_path, "wb") as f:
+                                                f.write(response.content)
+                                            
+                                            # Update post data with local image path
+                                            post_data["local_image_path"] = img_path
+                                            print(f"Downloaded image for post {image_posts_count+1}")
+                                    else:
+                                        # Already saved as screenshot
+                                        post_data["local_image_path"] = post_data["thumbnail_url"].replace("file://", "")
+                                except Exception as e:
+                                    print(f"Error downloading image: {str(e)}")
+                            
+                            # Add the post data to our list
+                            profile_data["posts"].append(post_data)
+                            image_posts_count += 1
+                            
+                            # Close the post page
+                            post_page.close()
+                            
+                        except Exception as e:
+                            print(f"Error processing post {post_idx}: {str(e)}")
+                            try:
+                                post_page.close()
+                            except:
+                                pass
+                
+                # If we still don't have enough posts, add placeholders to reach exactly 6
+                while image_posts_count < 6:
+                    print(f"Adding placeholder post #{image_posts_count+1} to reach 6 total posts")
+                    placeholder_post = {
+                        "url": f"https://www.instagram.com/{username}/",
+                        "thumbnail_url": "",
+                        "timestamp": datetime.now().isoformat(),
+                        "caption": "",
+                        "likes": 0,
+                        "comments": [],
+                        "comments_count": 0,
+                        "is_placeholder": True
+                    }
+                    profile_data["posts"].append(placeholder_post)
+                    image_posts_count += 1
+                    
+                    print(f"Created {image_posts_count} placeholder posts for account with no posts")
+                else:
+                    # Process up to 30 posts to find 6 images - this gives us plenty of attempts
+                    # in case some posts are videos or stories
+                    print(f"Found {len(post_elements)} posts. Processing to find 6 image posts...")
+                    
+                    max_attempts = min(50, len(post_elements))  # Try up to 50 posts to find 6 images
+                    for post_idx, post in enumerate(post_elements[:max_attempts]):
+                        if image_posts_count >= 6:
+                            break
+                        
+                        try:
+                            post_url = post.get_attribute("href")
+                            
+                            # Skip if we've already processed this URL
+                            if post_url in processed_urls:
+                                continue
+                            
+                            processed_urls.add(post_url)
+                            
+                            # Skip reels
+                            if "/reel/" in post_url:
+                                continue
+                            
+                            # Fix for relative URLs - ensure we have the full Instagram URL
+                            if post_url.startswith('/'):
+                                post_url = f"https://www.instagram.com{post_url}"
+                            
+                            # Open post in a new page
+                            post_page = page.context.new_page()
+                            post_page.goto(post_url)
+                            time.sleep(3)
+                            
+                            # Check if it's really an image post (not a video, carousel with videos, or reel)
+                            is_video = False
+                            
+                            # Check for video elements
+                            video_elements = post_page.locator("video").count()
+                            if video_elements > 0:
+                                is_video = True
+                            
+                            # Also check for video indicators in the UI
+                            if not is_video:
+                                video_indicators = post_page.locator("span[aria-label*='Video'], span[class*='video']").count()
+                                if video_indicators > 0:
+                                    is_video = True
+                            
+                            # Check for special video player UI elements
+                            if not is_video:
+                                video_ui_elements = post_page.locator("div._abpo, div[aria-label*='Play'], div[aria-label*='Pause']").count()
+                                if video_ui_elements > 0:
+                                    is_video = True
+                            
+                            # If it's a video, try to get the thumbnail anyway if we're running low on posts
+                            force_use_video = False
+                            if is_video and (post_idx >= max_attempts - 12) and image_posts_count < 4:
+                                print(f"Running low on posts, using video thumbnail as fallback for post #{image_posts_count+1}")
+                                force_use_video = True
+                            
+                            if is_video and not force_use_video:
+                                # Close the post page and skip this post
+                                post_page.close()
+                                continue
+                            
+                            # Create post data
+                            post_data = {
+                                "url": post_url,
+                                "thumbnail_url": "",
+                                "timestamp": "",
+                                "caption": "",
+                                "likes": 0,
+                                "comments": [],
+                                "comments_count": 0
+                            }
+                            
+                            # Get high-resolution image
+                            try:
+                                # Try multiple selectors for finding the image
+                                selectors = [
+                                    "article div[role='button'] img",
+                                    "article img:not([alt*='profile picture'])",
+                                    "div[role='dialog'] article img",
+                                    "div[role='dialog'] img:not([alt*='profile picture'])",
+                                    "img[alt*='Photo by']",  # Common alt text format
+                                    "img[sizes*='px']",      # Images typically have sizes attribute
+                                    "img[src*='instagram']"  # Any Instagram-hosted image
+                                ]
+                                
+                                for selector in selectors:
+                                    try:
+                                        img_element = post_page.locator(selector).first
+                                        if img_element:
+                                            post_data["thumbnail_url"] = img_element.get_attribute("src")
+                                            print(f"Found high-res image for post {image_posts_count+1}")
+                                            break
+                                    except:
+                                        continue
+                                
+                                # If we couldn't find an image, try taking a screenshot as last resort
+                                if not post_data["thumbnail_url"] and image_posts_count < 5:
+                                    try:
+                                        print(f"No image found, taking screenshot for post {image_posts_count+1}")
+                                        screenshot_path = os.path.join(current_image_dir, f"{username}_post_{image_posts_count+1}_screenshot.jpg")
+                                        post_page.screenshot(path=screenshot_path)
+                                        post_data["thumbnail_url"] = f"file://{screenshot_path}"  # Local file URL
+                                        post_data["is_screenshot"] = True
+                                    except Exception as ss_error:
+                                        print(f"Error taking screenshot: {str(ss_error)}")
                                 
                                 if not post_data["thumbnail_url"]:
                                     post_page.close()
